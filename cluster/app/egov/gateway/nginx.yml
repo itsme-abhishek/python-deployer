@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: egov
+  labels:
+    app: nginx
+    group: gateway
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  - port: 443
+    targetPort: 443
+    name: https
+{% if conf['nginx']['service_type'] == 'NodePort' %}
+    nodePort: {{ conf['nginx']['service_port'] }}
+{% endif %}
+  selector:
+    app: nginx
+    group: gateway
+  type: "{{conf['nginx']['service_type']}}"
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: egov
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  replicas: {{conf['nginx']['replicas']}}
+  template:
+    metadata:
+      labels:
+        app: nginx
+        group: gateway
+    spec:
+      volumes:
+        - name: ssl
+          hostPath:
+            path: /srv/acme
+      containers:
+      - name: nginx
+        image: {{conf['nginx']['images'][0]}}
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        readinessProbe:
+          httpGet:
+            path: /citizen
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+        env:
+{% if conf['egov-config']['domain'] %}
+        - name: DOMAIN
+          value: {{conf['egov-config']['domain']}}
+{% endif %}
+{% if conf['nginx']['kibana-credentials'] %}
+        - name: KIBANA_CREDENTIALS
+          value: {{conf['nginx']['kibana-credentials']}}
+{% endif %}
+{% if conf['nginx']['jaeger-credentials'] %}
+        - name: JAEGER_CREDENTIALS
+          value: {{conf['nginx']['jaeger-credentials']}}
+{% endif %}
+{% if conf['nginx']['SUBFILTER'] %}
+        - name: SUBFILTER
+          value: "{{conf['nginx']['SUBFILTER']}}"
+{% endif %}
+{% if conf['nginx']['ULB_JS_URL'] %}
+        - name: ULB_JS_URL
+          value: "{{conf['nginx']['ULB_JS_URL']}}"
+{% endif %}
+{% if conf['nginx']['TELEMETRY_JS_URL'] %}
+        - name: TELEMETRY_JS_URL
+          value: "{{conf['nginx']['TELEMETRY_JS_URL']}}"
+{% endif %}
+        - name: ASSET_BUCKET_URL
+          value: "{{conf['nginx']['asset-bucket-url']}}"
+        volumeMounts:
+          - name: ssl
+            mountPath: /etc/ssl/acme
+            #readOnly: true
+        resources:
+          requests:
+            memory: "128Mi"
+          limits:
+            memory: "{{ conf['nginx']['memory_limits'] or "256Mi"}}"
+      - name: dnsmasq
+        image: {{conf['nginx']['images'][1]}}
+        args:
+          - --listen
+          - "127.0.0.1:53"
+          - --default-resolver
+          - --append-search-domains
+          - --hostsfile=/etc/hosts
+          - --verbose
+        resources:
+          requests:
+            memory: "64Mi"
+          limits:
+            memory: "128Mi"
